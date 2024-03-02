@@ -1,0 +1,10 @@
+[package]
+name = "objective-rust"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+members = ["macros"]
+
+[dependencies]
+macros = { path = "./macros" }
