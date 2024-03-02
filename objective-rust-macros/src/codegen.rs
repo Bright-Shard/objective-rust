@@ -14,7 +14,7 @@ pub fn generate(parser_output: Vec<ParserOutput>) -> Result<TokenStream, Error> 
             ParserOutput::Class(class) => {
                 result.extend([class.to_string().parse::<TokenStream>().unwrap()])
             }
-            ParserOutput::Other(token) => result.extend([token]),
+            ParserOutput::RawToken(token) => result.extend([token]),
         }
     }
 

@@ -34,6 +34,8 @@ fn main() {
 
 #[objrs]
 mod ffi {
+    use super::*;
+
     extern "objc" {
         type NSApplication;
 

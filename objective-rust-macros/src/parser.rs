@@ -11,7 +11,7 @@ use {
 
 pub enum ParserOutput {
     Class(Class),
-    Other(TokenTree),
+    RawToken(TokenTree),
 }
 
 #[derive(Default)]
@@ -42,57 +42,76 @@ pub fn parse_macro_input(
     let mut output = Vec::new();
 
     while let Some(raw_token) = tokens.next() {
-        if let TokenTree::Group(group) = raw_token {
-            let parsed = parse_macro_input(group.stream().into_iter().peekable())?;
-            let mut stream = TokenStream::new();
+        let token = raw_token.to_string();
 
-            for parser_output in parsed {
-                match parser_output {
-                    ParserOutput::Class(class) => classes.insert(class),
-                    ParserOutput::Other(token) => stream.extend([token]),
-                }
+        if token == *"extern"
+            && tokens.peek().map(|token| token.to_string()) == Some("\"objc\"".into())
+        {
+            let start_span = raw_token.span();
+            tokens.next().unwrap();
+
+            let Some(TokenTree::Group(group)) = tokens.next() else {
+                return Err(Error {
+                    start: start_span,
+                    end: start_span,
+                    kind: ErrorKind::UnknownObjcBinding,
+                });
+            };
+
+            if group.delimiter() != Delimiter::Brace {
+                return Err(Error {
+                    start: start_span,
+                    end: group.span(),
+                    kind: ErrorKind::BadBindingBrackets,
+                });
             }
 
-            output.extend([ParserOutput::Other(TokenTree::Group(Group::new(
-                group.delimiter(),
-                stream,
-            )))]);
+            parse_extern_block(group.stream().into_iter().peekable())?
+                .into_iter()
+                .for_each(|class| {
+                    classes.insert(class);
+                });
             continue;
         }
 
-        let token = raw_token.to_string();
-        if token == *"extern" {
-            let next_token = tokens.peek().map(|token| token.to_string());
-            if next_token == Some("\"objc\"".into()) {
-                let start_span = raw_token.span();
-                tokens.next().unwrap();
+        if token == *"mod" {
+            if let Some(TokenTree::Ident(_)) = tokens.peek() {
+                let mod_name = tokens.next().unwrap();
+                let mod_name_span = mod_name.span();
 
-                let Some(TokenTree::Group(group)) = tokens.next() else {
+                let mut scope = vec![
+                    ParserOutput::RawToken(raw_token),
+                    ParserOutput::RawToken(mod_name),
+                ];
+
+                let Some(TokenTree::Group(braces)) = tokens.next() else {
                     return Err(Error {
-                        start: start_span,
-                        end: start_span,
-                        kind: ErrorKind::UnknownObjcBinding,
+                        start: mod_name_span,
+                        end: mod_name_span,
+                        kind: ErrorKind::GiveUp,
                     });
                 };
-
-                if group.delimiter() != Delimiter::Brace {
+                if braces.delimiter() != Delimiter::Brace {
                     return Err(Error {
-                        start: start_span,
-                        end: group.span(),
-                        kind: ErrorKind::BadBindingBrackets,
+                        start: mod_name_span,
+                        end: mod_name_span,
+                        kind: ErrorKind::GiveUp,
                     });
                 }
 
-                parse_extern_block(group.stream().into_iter().peekable())?
-                    .into_iter()
-                    .for_each(|class| {
-                        classes.insert(class);
-                    });
+                let scoped_output = parse_macro_input(braces.stream().into_iter().peekable())?;
+                let scoped_tokens = crate::codegen::generate(scoped_output)?;
+                scope.push(ParserOutput::RawToken(TokenTree::Group(Group::new(
+                    Delimiter::Brace,
+                    scoped_tokens,
+                ))));
+                output.extend(scope);
+
                 continue;
             }
         }
 
-        output.push(ParserOutput::Other(raw_token));
+        output.push(ParserOutput::RawToken(raw_token));
     }
 
     output.extend(classes.into_parser_output());
