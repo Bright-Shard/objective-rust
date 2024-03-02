@@ -3,12 +3,12 @@
 version = 3
 
 [[package]]
-name = "macros"
-version = "0.1.0"
-
-[[package]]
 name = "objective-rust"
 version = "0.1.0"
 dependencies = [
- "macros",
+ "objective-rust-macros",
 ]
+
+[[package]]
+name = "objective-rust-macros"
+version = "0.1.0"

@@ -1,5 +1,4 @@
-pub use macros;
-pub use macros::objrs;
+pub use objective_rust_macros::*;
 
 #[cfg(not(target_os = "macos"))]
 compile_error!("objective-rust only supports macOS");
