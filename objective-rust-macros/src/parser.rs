@@ -5,7 +5,7 @@ pub use parse_type::parse_type;
 
 use {
     crate::{Attribute, AttributeError, Class, Error, ErrorKind},
-    proc_macro::{Delimiter, Group, TokenStream, TokenTree},
+    proc_macro::{Delimiter, Group, TokenTree},
     std::{collections::hash_map::HashMap, iter::Peekable},
 };
 

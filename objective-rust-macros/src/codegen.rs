@@ -38,12 +38,6 @@ impl Display for Class {
             } = method;
             let selector = selector.as_ref().unwrap_or(name);
 
-            if return_type.is_some() {
-                let Some(Type::Pointer(_, _, _)) = return_type else {
-                    panic!("Only pointer returns are currently supported");
-                };
-            }
-
             let mut args_with_types = String::new();
             let mut args_no_types = String::new();
             for arg in args {
@@ -131,6 +125,10 @@ impl Display for Class {
             r#"
             pub struct {struct_name} {{
                 instance: std::ptr::NonNull<()>,
+                dealloc_ptr: (
+                    extern "C" fn(instance: *mut (), sel: objective_rust::ffi::Selector),
+                    objective_rust::ffi::Selector
+                ),
                 {struct_fields}
             }}
             impl {struct_name} {{
@@ -142,9 +140,14 @@ impl Display for Class {
                 /// - The pointer must be valid for as long as `Self` lives.
                 pub unsafe fn from_raw(ptr: *mut Self) -> Option<Self> {{
                     let instance = std::ptr::NonNull::new(ptr.cast())?;
+                    let dealloc_sel = objective_rust::ffi::get_selector("dealloc").unwrap();
+                    let dealloc_fn = unsafe {{ core::mem::transmute(
+                        objective_rust::ffi::get_method_impl(Self::get_objc_class(), dealloc_sel).unwrap()
+                    ) }};
 
                     Some(Self {{
                         instance,
+                        dealloc_ptr: (dealloc_fn, dealloc_sel),
                         {constructor}
                     }})
                 }}
@@ -178,6 +181,11 @@ impl Display for Class {
                 }}
 
                 {struct_fns}
+            }}
+            impl Drop for {struct_name} {{
+                fn drop(&mut self) {{
+                    self.dealloc_ptr.0(self.instance.as_ptr(), self.dealloc_ptr.1);
+                }}
             }}
             "#,
         )

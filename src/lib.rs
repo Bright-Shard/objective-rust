@@ -5,13 +5,30 @@ compile_error!("objective-rust only supports macOS");
 
 /// Objective-C's boolean type.
 #[repr(transparent)]
-pub struct Bool(std::ffi::c_char);
-impl Bool {
+pub struct ObjcBool(std::ffi::c_char);
+impl ObjcBool {
     pub const TRUE: Self = Self(1);
     pub const FALSE: Self = Self(0);
 
     pub const YES: Self = Self::TRUE;
     pub const NO: Self = Self::FALSE;
+}
+impl From<bool> for ObjcBool {
+    fn from(value: bool) -> Self {
+        match value {
+            true => Self::TRUE,
+            false => Self::FALSE,
+        }
+    }
+}
+impl From<ObjcBool> for bool {
+    fn from(value: ObjcBool) -> bool {
+        match value.0 {
+            1 => true,
+            0 => false,
+            _ => unreachable!(),
+        }
+    }
 }
 
 pub mod ffi {

@@ -1,6 +1,6 @@
 //! Makes a window on macOS with AppKit. This doesn't process any events.
 
-use objective_rust::{objrs, Bool as ObjcBool};
+use objective_rust::{objrs, ObjcBool};
 
 fn main() {
     println!("Getting shared NSApp");

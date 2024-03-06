@@ -36,6 +36,8 @@ fn main() {
 
 This API allows Objective-C types to feel almost native in Rust, and never relies on message passing (even internally, objective-rust stores a pointer to the actual C function for a method, and calls that instead of sending an Objective-C message).
 
+Objective-C instances also act like normal Rust instances; when it is dropped, the `dealloc` method is called, preventing memory leaks.
+
 By the way, the `objrs` macro also works on entire modules:
 
 ```rust
