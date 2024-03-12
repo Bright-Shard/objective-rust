@@ -2,6 +2,11 @@
 name = "objective-rust-macros"
 version = "0.1.0"
 edition = "2021"
+authors = ["BrightShard <brightshard@brightshard.dev>"]
+description = "Macros for objective-rust."
+repository = "https://github.com/Bright-Shard/objective-rust/tree/main/objective-rust-macros"
+license = "MIT OR Apache-2.0"
+readme = "../README.md"
 
 [lib]
 proc-macro = true
