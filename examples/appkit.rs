@@ -1,15 +1,16 @@
 //! Makes a window on macOS with AppKit. This doesn't process any events.
 
-use objective_rust::{objrs, ObjcBool};
+use {
+    core::ptr::NonNull,
+    objective_rust::{objrs, ObjcBool},
+};
 
 fn main() {
-    println!("Getting shared NSApp");
-    let shared = NSApplication::shared();
-    let ns_app = unsafe { NSApplication::from_raw(shared).unwrap() };
+    let shared = NonNull::new(NSApplication::shared()).unwrap();
+    let ns_app = unsafe { NSApplication::from_raw(shared) };
 
-    println!("Creating window");
-    let window = NSWindow::alloc();
-    let mut window = unsafe { NSWindow::from_raw(window).unwrap() };
+    let window = NonNull::new(NSWindow::alloc()).unwrap();
+    let mut window = unsafe { NSWindow::from_raw(window) };
     let mut style_mask = NSWindowStyleMask::default();
     style_mask.closable().resizable().titled();
     window.init(
@@ -22,11 +23,10 @@ fn main() {
         },
         style_mask,
         2,
-        ObjcBool::FALSE,
+        false.into(),
     );
     window.make_key(std::ptr::null_mut());
 
-    println!("Calling run");
     ns_app.run();
 
     unreachable!()

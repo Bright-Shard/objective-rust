@@ -45,7 +45,8 @@ pub fn parse_macro_input(
         let token = raw_token.to_string();
 
         if token == *"extern"
-            && tokens.peek().map(|token| token.to_string()) == Some("\"objc\"".into())
+            && tokens.peek().map(|token| token.to_string().to_lowercase())
+                == Some("\"objc\"".into())
         {
             let start_span = raw_token.span();
             tokens.next().unwrap();

@@ -23,10 +23,11 @@ pub fn generate(parser_output: Vec<ParserOutput>) -> Result<TokenStream, Error> 
 
 impl Display for Class {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let struct_name = &self.name;
-        let mut struct_fields = String::new();
-        let mut constructor = String::new();
+        let class_name = &self.name;
         let mut struct_fns = String::new();
+        let mut vtable_entries = String::new();
+        let mut vtable_setup = String::new();
+        let mut vtable_constructor = String::new();
 
         for method in &self.methods {
             let Function {
@@ -47,145 +48,145 @@ impl Display for Class {
             }
 
             let return_type_formatted = if let Some(ret) = return_type {
-                format!("-> {ret}").replace("Self", struct_name)
+                format!("-> {ret}").replace("Self", &format!("{class_name}Instance"))
             } else {
                 String::new()
             };
 
-            let fn_args = if *self_reference == SelfReference::None && args_with_types.len() > 2 {
-                &args_with_types[2..]
-            } else {
-                args_with_types.as_str()
-            };
-            struct_fns +=
-                &format!("pub fn {name}({self_reference}{fn_args}){return_type_formatted}",);
-
             let instance_ty = match self_reference {
-                SelfReference::None => "objective_rust::ffi::Class",
-                SelfReference::Mutable => "*mut ()",
-                SelfReference::Immutable => "*const ()",
+                SelfReference::None => "objective_rust::ffi::Class".into(),
+                SelfReference::Mutable => format!("*mut {class_name}Instance"),
+                SelfReference::Immutable => format!("*const {class_name}Instance"),
                 SelfReference::Owned => panic!("Methods must take `&self` or `&mut self`"),
             };
 
             let c_fn = format!(
-                "extern \"C\" fn(instance: {instance_ty}, sel: objective_rust::ffi::Selector{args_with_types}){return_type_formatted}"
+                "
+                extern \"C\" fn(
+                    instance: {instance_ty},
+                    sel: objective_rust::ffi::Selector
+                    {args_with_types}
+                ){return_type_formatted}
+                "
             );
 
-            match self_reference {
-                SelfReference::None => {
-                    struct_fns += &format!(
-                        r#"
-                        {{
-                            use {{
-                                std::{{mem, cell::{{RefCell, OnceCell}}}},
-                                objective_rust::ffi::{{self, Selector}}
-                            }};
+            let class = match self_reference {
+                SelfReference::None => "metaclass",
+                SelfReference::Mutable | SelfReference::Immutable => "class",
+                SelfReference::Owned => panic!("Objective-C methods cannot own `self`."),
+            };
 
-                            thread_local! {{
-                                static FUNC: ({c_fn}, Selector) = {{
-                                    let meta_class = {struct_name}::get_objc_metaclass();
-                                    let name = ffi::get_selector("{selector}").unwrap();
-                                    let implementation = ffi::get_method_impl(meta_class, name);
-                                    let method = unsafe {{ mem::transmute(implementation) }};
+            vtable_entries += &format!("{name}: ({c_fn}, objective_rust::ffi::Selector),");
+            vtable_setup += &format!(
+                r#"
+                let {name} = {{
+                    let sel = objective_rust::ffi::get_selector("{selector}").unwrap();
+                    let raw_func = objective_rust::ffi::get_method_impl({class}, sel).unwrap();
+                    let func = unsafe {{ core::mem::transmute(raw_func) }};
 
-                                    (method, name)
-                                }};
-                            }}
+                    (func, sel)
+                }};
+                "#
+            );
+            vtable_constructor += &format!("{name},");
 
-                            FUNC.with(|(func, sel)| func(Self::get_objc_class(), *sel{args_no_types}))
-                        }}
-                        "#
-                    );
-                }
-                SelfReference::Mutable | SelfReference::Immutable => {
-                    struct_fields +=
-                        &format!("{name}_ptr: ({c_fn}, objective_rust::ffi::Selector),");
-                    let get_sel =
-                        format!("objective_rust::ffi::get_selector(\"{selector}\").unwrap()");
-                    let get_impl = format!(
-                        "objective_rust::ffi::get_method_impl(Self::get_objc_class(), {get_sel}).unwrap()"
-                    );
-                    constructor += &format!(
-                        "{name}_ptr: (unsafe {{ core::mem::transmute({get_impl}) }}, {get_sel}),"
-                    );
-                    struct_fns += &format!(
-                        "
-                        {{
-                            (self.{name}_ptr.0)(self.instance.as_ptr(), self.{name}_ptr.1{args_no_types})
-                        }}
-                        "
-                    );
-                }
-                SelfReference::Owned => unreachable!(),
-            }
+            let fn_args = if *self_reference == SelfReference::None && args_with_types.len() > 2 {
+                // skip over the `, `
+                &args_with_types[2..]
+            } else {
+                args_with_types.as_str()
+            };
+            let instance_ptr = if *self_reference == SelfReference::None {
+                "Self::get_objc_class()"
+            } else {
+                "self.0.as_ptr()"
+            };
+            struct_fns += &format!(
+                "
+                pub fn {name}({self_reference}{fn_args}){return_type_formatted} {{
+                    {class_name}_VTABLE.with(|vtable| {{
+                        let func = vtable.{name}.0;
+                        let sel = vtable.{name}.1;
+
+                        func({instance_ptr}, sel{args_no_types})
+                    }})
+                }}
+                "
+            );
         }
 
         write!(
             f,
             r#"
-            pub struct {struct_name} {{
-                instance: std::ptr::NonNull<()>,
-                release_ptr: (
-                    extern "C" fn(instance: *mut (), sel: objective_rust::ffi::Selector),
+            struct {class_name}VTable {{
+                class: objective_rust::ffi::Class,
+                metaclass: objective_rust::ffi::Class,
+                release: (
+                    extern "C" fn(*mut {class_name}Instance, objective_rust::ffi::Selector),
                     objective_rust::ffi::Selector
                 ),
-                {struct_fields}
+                {vtable_entries}
             }}
-            impl {struct_name} {{
-                /// Attempts to create a new `{struct_name}` from a pointer. Fails if the
-                /// pointer is null.
+            thread_local! {{
+                static {class_name}_VTABLE: {class_name}VTable = {{
+                    let class = objective_rust::ffi::get_class("{class_name}").unwrap();
+                    let metaclass = objective_rust::ffi::get_metaclass("{class_name}").unwrap();
+                    let release = {{
+                        let sel = objective_rust::ffi::get_selector("release").unwrap();
+                        let raw_func = objective_rust::ffi::get_method_impl(class, sel).unwrap();
+                        let func = unsafe {{ core::mem::transmute(raw_func) }};
+
+                        (func, sel)
+                    }};
+
+                    {vtable_setup}
+
+                    {class_name}VTable {{
+                        class,
+                        metaclass,
+                        release,
+                        {vtable_constructor}
+                    }}
+                }};
+            }}
+
+            /// An opaqe type representing an Objective-C instance of [`{class_name}`].
+            /// Class constructors should return a pointer to this type, and [`{class_name}`]
+            /// stores a pointer to this type.
+            pub struct {class_name}Instance(std::marker::PhantomData<()>);
+
+            pub struct {class_name}(std::ptr::NonNull<{class_name}Instance>);
+
+            impl {class_name} {{
+                /// Attempts to create a new `{class_name}` from a pointer.
                 ///
                 /// # Safety
-                /// - The pointer must point to a valid instance of the class `{struct_name}` represents.
-                /// - The pointer must be valid for as long as `Self` lives.
-                pub unsafe fn from_raw(ptr: *mut Self) -> Option<Self> {{
-                    let instance = std::ptr::NonNull::new(ptr.cast())?;
+                /// - The pointer must point to a valid `{class_name}Instance`.
+                /// - The pointer must be valid for at least as long as this instance lives.
+                pub unsafe fn from_raw(ptr: core::ptr::NonNull<{class_name}Instance>) -> Self {{
+                    Self(ptr)
+                }}
 
-                    let release_sel = objective_rust::ffi::get_selector("release").unwrap();
-                    let release_fn = unsafe {{ core::mem::transmute(
-                        objective_rust::ffi::get_method_impl(Self::get_objc_class(), release_sel).unwrap()
-                    ) }};
-
-                    Some(Self {{
-                        instance,
-                        release_ptr: (release_fn, release_sel),
-                        {constructor}
-                    }})
+                /// Get the underlying pointer to the actual Objective-C class instance.
+                pub fn into_raw(&self) -> core::ptr::NonNull<{class_name}Instance> {{
+                    self.0
                 }}
 
                 /// Returns the Objective-C class this struct binds to.
                 pub fn get_objc_class() -> objective_rust::ffi::Class {{
-                    use {{
-                        std::{{cell::OnceCell, ptr::addr_of}},
-                        objective_rust::ffi::{{self, Class}}
-                    }};
-
-                    thread_local! {{
-                        static PTR: Class = ffi::get_class("{struct_name}").unwrap();
-                    }}
-
-                    PTR.with(|ptr| ptr.clone())
+                    {class_name}_VTABLE.with(|vtable| vtable.class.clone())
                 }}
 
                 /// Returns thie Objective-C metaclass for the class this struct binds to.
                 pub fn get_objc_metaclass() -> objective_rust::ffi::Class {{
-                    use {{
-                        std::{{cell::OnceCell, ptr::addr_of}},
-                        objective_rust::ffi::{{self, Class}}
-                    }};
-
-                    thread_local! {{
-                        static PTR: Class = ffi::get_metaclass("{struct_name}").unwrap();
-                    }}
-
-                    PTR.with(|ptr| ptr.clone())
+                    {class_name}_VTABLE.with(|vtable| vtable.metaclass.clone())
                 }}
 
                 {struct_fns}
             }}
-            impl Drop for {struct_name} {{
+            impl Drop for {class_name} {{
                 fn drop(&mut self) {{
-                    self.release_ptr.0(self.instance.as_ptr(), self.release_ptr.1);
+                    {class_name}_VTABLE.with(|vtable| vtable.release.0(self.0.as_ptr(), vtable.release.1) );
                 }}
             }}
             "#,
